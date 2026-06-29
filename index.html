@@ -64,7 +64,6 @@
     <div id="root"></div>
 
     <script type="text/babel">
-
         const YOUR_APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbwzJC9fhOddcoOgYesXhA7SLyMP9qzaa1rZ_h_rE016B0CvAcdZCHB9PyscuAtKRPhA/exec";
 
         // 아이콘 SVG 컴포넌트
@@ -124,6 +123,8 @@
           
           const [showAddModal, setShowAddModal] = React.useState(false);
           const [showProjectsModal, setShowProjectsModal] = React.useState(false);
+          // 단계 설정 모달 상태 추가
+          const [selectedFamiliarForStage, setSelectedFamiliarForStage] = React.useState(null);
 
           React.useEffect(() => {
             const root = window.document.documentElement;
@@ -241,8 +242,15 @@
               trackers.forEach(t => { updated[t.name] = t.targetStage; });
               setMyFamiliars(updated);
               setTrackers(trackers.map(t => ({ ...t, baseStage: t.targetStage })));
+              // 수정: 확정 시 남은 알의 개수를 전체 알 개수에 반영
+              setTotalEggs(remainingEggs);
               alert('My 이마젠에 반영되었습니다.');
             }
+          };
+
+          const handleStageSelect = (stageIdx) => {
+             setMyFamiliars(prev => ({...prev, [selectedFamiliarForStage]: stageIdx}));
+             setSelectedFamiliarForStage(null);
           };
 
           if (loading) {
@@ -295,13 +303,12 @@
                                 <img src={getImageUrl(name, currentIdx)} alt={name} className="w-full h-full object-cover" />
                               </div>
                               <span className="text-[10px] font-bold text-center line-clamp-1 w-full text-black dark:text-white">{name}</span>
-                              <select 
-                                value={currentIdx} 
-                                onChange={(e) => setMyFamiliars({...myFamiliars, [name]: parseInt(e.target.value)})}
-                                className={`w-full text-xs font-black bg-gray-100 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 py-1 text-center focus:outline-none appearance-none rounded-none ${style.color}`}
+                              <button 
+                                onClick={() => setSelectedFamiliarForStage(name)}
+                                className={`w-full text-xs font-black bg-gray-100 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 py-1 text-center focus:outline-none rounded-none active:scale-95 transition-transform ${style.color}`}
                               >
-                                {STAGES.map((s, i) => <option key={i} value={i}>{s}</option>)}
-                              </select>
+                                {STAGES[currentIdx]}
+                              </button>
                             </div>
                           );
                         })}
@@ -316,11 +323,11 @@
                   <div className="bg-white dark:bg-black p-5 border border-gray-200 dark:border-zinc-800 space-y-4">
                     <div className="flex flex-col gap-3">
                       <div className="flex justify-between items-center bg-gray-50 dark:bg-zinc-900 px-4 py-2 border border-gray-200 dark:border-zinc-800">
-                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">전체 보유 알</span>
+                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">보유한 이마젠 알 수량</span>
                         <input type="number" min="0" value={totalEggs} onChange={(e) => setTotalEggs(parseInt(e.target.value) || 0)} className="w-20 bg-transparent border-none text-base font-black text-right focus:outline-none text-black dark:text-white" />
                       </div>
                       <div className="flex justify-between items-center px-2">
-                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">잔여 배정량</span>
+                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">남은 이마젠 알 수량</span>
                         <span className={`text-lg font-black ${remainingEggs < 0 ? 'text-red-500' : 'text-blue-500'}`}>{remainingEggs} 개</span>
                       </div>
                     </div>
@@ -453,6 +460,42 @@
                           </div>
                         ))
                       )}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 각성 단계 설정 모달 추가 */}
+              {selectedFamiliarForStage && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
+                  <div className="bg-white dark:bg-black w-full max-w-sm rounded-lg flex flex-col border border-gray-200 dark:border-zinc-800 animate-fadeIn">
+                    <div className="p-4 border-b border-gray-200 dark:border-zinc-800 flex justify-between items-center">
+                      <span className="font-black text-sm text-black dark:text-white">{selectedFamiliarForStage} 각성 단계</span>
+                      <button onClick={() => setSelectedFamiliarForStage(null)} className="p-1 text-gray-500 active:scale-90 transition-transform"><X className="w-5 h-5"/></button>
+                    </div>
+                    <div className="p-4 space-y-2 pb-6">
+                      <div className="grid grid-cols-2 gap-2 mb-3">
+                          <button onClick={() => handleStageSelect(0)} className="py-2 text-xs font-bold border border-gray-200 dark:border-zinc-700 rounded text-gray-500 active:scale-95 transition-transform bg-gray-50 dark:bg-zinc-900">X</button>
+                          <button onClick={() => handleStageSelect(1)} className="py-2 text-xs font-bold border border-blue-200 dark:border-blue-900 rounded text-blue-600 dark:text-blue-500 active:scale-95 transition-transform bg-blue-50 dark:bg-blue-900/20">일반 0</button>
+                      </div>
+                      {[
+                        { label: '일반', start: 2, end: 11, colorClass: 'text-blue-600 dark:text-blue-500 border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-900/10' },
+                        { label: '초월', start: 12, end: 21, colorClass: 'text-purple-600 dark:text-purple-500 border-purple-200 dark:border-purple-900 bg-purple-50 dark:bg-purple-900/10' },
+                        { label: '초극', start: 22, end: 31, colorClass: 'text-red-600 dark:text-red-500 border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/10' }
+                      ].map(group => (
+                        <div key={group.label} className="space-y-1">
+                          <div className="grid grid-cols-5 gap-1">
+                             {STAGES.slice(group.start, group.start + 5).map((s, i) => (
+                                <button key={s} onClick={() => handleStageSelect(group.start + i)} className={`py-1.5 text-[10px] font-bold border rounded ${group.colorClass} truncate active:scale-95 transition-transform`}>{s}</button>
+                             ))}
+                          </div>
+                          <div className="grid grid-cols-5 gap-1">
+                             {STAGES.slice(group.start + 5, group.end + 1).map((s, i) => (
+                                <button key={s} onClick={() => handleStageSelect(group.start + 5 + i)} className={`py-1.5 text-[10px] font-bold border rounded ${group.colorClass} truncate active:scale-95 transition-transform`}>{s}</button>
+                             ))}
+                          </div>
+                        </div>
+                      ))}
                     </div>
                   </div>
                 </div>

@@ -419,13 +419,13 @@
         }
 
         const container = document.getElementById('root');
-        const root = RoyalRoot ? RoyalRoot : ReactDOM.createRoot(container);
-        // ReactDOM.createRoot 호환 안전장치
-        const ReactRoot = ReactDOM.createRoot ? ReactDOM.createRoot(container) : null;
-        if(ReactRoot) {
-            ReactRoot.render(<App />);
+        
+        // 오타(RoyalRoot)를 수정하고 React 버전에 맞게 안전하게 실행하는 로직으로 변경
+        if (ReactDOM.createRoot) {
+          const root = ReactDOM.createRoot(container);
+          root.render(<App />);
         } else {
-            ReactDOM.render(<App />, container);
+          ReactDOM.render(<App />, container);
         }
     </script>
 </body>

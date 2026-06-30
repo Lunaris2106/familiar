@@ -17,6 +17,8 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
     <!-- Babel (브라우저에서 JSX 변환) -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Html2Canvas (이미지 캡처용) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
 
     <style>
         /* 슬라이더 트랙 */
@@ -33,7 +35,7 @@
             background: var(--thumb-color, #a3a3a3) !important;
             border: 2px solid #ffffff;
             transition: transform 0.1s ease;
-            margin-top: -6px; /* 트랙 높이 맞춤 */
+            margin-top: -6px;
         }
         .dark .custom-slider::-webkit-slider-thumb { border-color: #000000; }
         .custom-slider::-webkit-slider-runnable-track { height: 4px; }
@@ -58,7 +60,7 @@
         }
         .animate-fadeIn { animation: fadeIn 0.2s ease-out forwards; }
         
-        /* 모바일에서 텍스트 드래그 방지 */
+        /* 텍스트 드래그 방지 */
         body { -webkit-user-select: none; user-select: none; }
     </style>
 </head>
@@ -66,7 +68,8 @@
     <div id="root"></div>
 
     <script type="text/babel">
-        const YOUR_APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbwzJC9fhOddcoOgYesXhA7SLyMP9qzaa1rZ_h_rE016B0CvAcdZCHB9PyscuAtKRPhA/exec";
+        // 1. URL 변경
+        const YOUR_APPSCRIPT_URL = "https://script.google.com/macros/s/AKfycbxaHzKTvFUpH3AYkdcHOAidebeXLrw3kxnJeN8Ss0eYL8yizvbuL40bE4n2dxZWLq0U/exec";
 
         // 아이콘 SVG 컴포넌트
         const Sun = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2"/><path d="M12 20v2"/><path d="m4.93 4.93 1.41 1.41"/><path d="m17.66 17.66 1.41 1.41"/><path d="M2 12h2"/><path d="M20 12h2"/><path d="m6.34 17.66-1.41 1.41"/><path d="m19.07 4.93-1.41 1.41"/></svg>;
@@ -79,6 +82,7 @@
         const Save = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>;
         const Check = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12"/></svg>;
         const Loader2 = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>;
+        const Download = ({className}) => <svg className={className} xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>;
 
         const STAGES = [
           "X",
@@ -95,13 +99,28 @@
 
         const ATTRIBUTE_ORDER = ["불", "물", "나무", "빛", "어둠"];
 
+        // 이미지 저장을 위한 매트릭스 설정
+        const MATRIX_ROWS = [
+            { id: 'normal', label: '일반', condition: f => f.tier === '일반' },
+            { id: 'atk', label: '공격형', condition: f => f.tier === '배경' && f.type === '공격형' },
+            { id: 'sup', label: '지원형', condition: f => f.tier === '배경' && f.type === '지원형' },
+            { id: 'def', label: '방어형', condition: f => f.tier === '배경' && f.type === '방어형' }
+        ];
+
+        const MATRIX_COLS = [
+            { attr: '불', activeColor: 'bg-red-500 text-white border-red-600' },
+            { attr: '물', activeColor: 'bg-blue-500 text-white border-blue-600' },
+            { attr: '나무', activeColor: 'bg-green-500 text-white border-green-600' },
+            { attr: '빛', activeColor: 'bg-yellow-400 text-black border-yellow-500' },
+            { attr: '어둠', activeColor: 'bg-purple-500 text-white border-purple-600' }
+        ];
+
         const calculateCost = (startIdx, endIdx) => {
           let cost = 0;
           for (let i = startIdx; i < endIdx; i++) cost += COSTS[i];
           return cost;
         };
 
-        // 전용 알(extra)을 우선 소모하고 남은 공용 알 필요량 계산
         const calculateNetCost = (startIdx, endIdx, extraEggs) => {
             const totalCost = calculateCost(startIdx, endIdx);
             return Math.max(0, totalCost - extraEggs);
@@ -129,11 +148,10 @@
           const [activeAttrTab, setActiveAttrTab] = React.useState(ATTRIBUTE_ORDER[0]);
           const [darkMode, setDarkMode] = React.useState(() => localStorage.getItem('theme') === 'dark');
 
-          const [familiarData, setFamiliarData] = React.useState({});
-          const [metadata, setMetadata] = React.useState([]);
+          // 이마젠 정보 딕셔너리
+          const [familiarInfo, setFamiliarInfo] = React.useState({});
           
           const [myFamiliars, setMyFamiliars] = React.useState(() => JSON.parse(localStorage.getItem('MY_FAMILIARS')) || {});
-          // 추가 보유 이마젠 State
           const [myFamiliarsExtra, setMyFamiliarsExtra] = React.useState(() => JSON.parse(localStorage.getItem('MY_FAMILIARS_EXTRA')) || {});
           
           const [projects, setProjects] = React.useState(() => JSON.parse(localStorage.getItem('CALC_PROJECTS')) || []);
@@ -143,6 +161,11 @@
           const [showAddModal, setShowAddModal] = React.useState(false);
           const [showProjectsModal, setShowProjectsModal] = React.useState(false);
           const [selectedFamiliarForStage, setSelectedFamiliarForStage] = React.useState(null);
+
+          // 이미지 저장 관련 상태
+          const [showSaveModal, setShowSaveModal] = React.useState(false);
+          const [saveSelection, setSaveSelection] = React.useState(new Set());
+          const [isSavingImage, setIsSavingImage] = React.useState(false);
 
           React.useEffect(() => {
             const root = window.document.documentElement;
@@ -171,13 +194,27 @@
               const response = await fetch(url, { method: 'POST', body: JSON.stringify({ action: 'get_metadata' }) });
               const data = await response.json();
               if (data.status === 'success' && data.familiar_data) {
-                const grouped = {};
+                const infoMap = {};
                 data.familiar_data.forEach(item => {
-                  if (!grouped[item.familiar]) grouped[item.familiar] = {};
-                  grouped[item.familiar][item.power] = item.url;
+                  if (!infoMap[item.familiar]) {
+                    infoMap[item.familiar] = { 
+                      name: item.familiar, 
+                      tier: item.tier || '일반', 
+                      type: item.type || '기타', 
+                      urls: {} 
+                    };
+                  }
+                  infoMap[item.familiar].urls[item.power] = item.url;
                 });
-                setFamiliarData(grouped);
-                setMetadata(data.metadata || []);
+                
+                if (data.metadata) {
+                  data.metadata.forEach(item => {
+                    if (infoMap[item.item_name]) {
+                      infoMap[item.item_name].attribute = item.attribute || '기타';
+                    }
+                  });
+                }
+                setFamiliarInfo(infoMap);
               } else {
                 throw new Error('데이터 구조가 올바르지 않습니다.');
               }
@@ -188,20 +225,51 @@
             }
           };
 
+          // 2. My 탭 정렬 로직
+          const myTabGroups = React.useMemo(() => {
+             if (!familiarInfo || Object.keys(familiarInfo).length === 0) return [[], [], [], []];
+             const groups = [[], [], [], []];
+             Object.values(familiarInfo).forEach(f => {
+                if (f.attribute !== activeAttrTab) return; // 선택된 속성만 필터링
+                if (f.tier === '배경' && f.type === '공격형') groups[0].push(f);
+                else if (f.tier === '배경' && f.type === '지원형') groups[1].push(f);
+                else if (f.tier === '배경' && f.type === '방어형') groups[2].push(f);
+                else if (f.tier === '일반') groups[3].push(f);
+             });
+             return groups;
+          }, [familiarInfo, activeAttrTab]);
+
+          // 3. 플로팅 창 내 정렬
           const familiarsByAttribute = React.useMemo(() => {
             const grouped = {};
             ATTRIBUTE_ORDER.forEach(attr => grouped[attr] = []);
-            metadata.forEach(item => {
-              if (item.category?.toLowerCase() === 'familiar' || item.category === '이마젠') {
-                const attr = item.attribute || '기타';
-                if (!grouped[attr]) grouped[attr] = [];
-                grouped[attr].push(item.item_name);
-              }
+
+            const sortWeights = {
+                '배경_공격형': 1,
+                '배경_지원형': 2,
+                '배경_방어형': 3,
+                '일반_공격형': 4,
+                '일반_지원형': 4,
+                '일반_방어형': 4,
+                '일반_기타': 4
+            };
+
+            const getWeight = (f) => {
+                if (f.tier === '일반') return 4;
+                return sortWeights[`${f.tier}_${f.type}`] || 5;
+            };
+
+            Object.values(familiarInfo).forEach(f => {
+              if (grouped[f.attribute]) grouped[f.attribute].push(f);
+            });
+
+            ATTRIBUTE_ORDER.forEach(attr => {
+                grouped[attr].sort((a, b) => getWeight(a) - getWeight(b));
+                grouped[attr] = grouped[attr].map(f => f.name);
             });
             return grouped;
-          }, [metadata]);
+          }, [familiarInfo]);
 
-          // 공용 알 계산 로직 (전용 알 우선 소모)
           const remainingEggs = React.useMemo(() => {
             const usedEggs = trackers.reduce((acc, t) => {
                 return acc + calculateNetCost(t.baseStage, t.targetStage, t.extraEggs);
@@ -213,7 +281,6 @@
             if (trackers.some(t => t.name === name)) { setShowAddModal(false); return; }
             const base = myFamiliars[name] || 0;
             const extra = myFamiliarsExtra[name] || 0;
-            // 트래커 생성 시 현재의 extraEggs 값을 복사하여 저장 (독립 계산용)
             setTrackers([...trackers, { id: Date.now().toString() + Math.random(), name, baseStage: base, targetStage: base, extraEggs: extra }]);
             setShowAddModal(false);
           };
@@ -231,7 +298,7 @@
 
             if (costDiff > remainingEggs) {
               let maxAffordable = tracker.targetStage;
-              let tempRemaining = remainingEggs + currentNetCost; // 이 트래커에 최대로 할당 가능한 공용 알
+              let tempRemaining = remainingEggs + currentNetCost;
               
               for (let i = tracker.baseStage; i < target; i++) {
                 if (calculateNetCost(tracker.baseStage, i + 1, extra) <= tempRemaining) {
@@ -255,11 +322,11 @@
             if (stageName.includes("초극")) power = "초극";
             else if (stageName.includes("초월")) power = "초월";
             else if (stageName.includes("일반")) power = "일반";
-            return familiarData[name]?.[power] || familiarData[name]?.["X"] || "";
+            return familiarInfo[name]?.urls?.[power] || familiarInfo[name]?.urls?.["X"] || "";
           };
 
           const saveProject = () => {
-            const defaultTitle = `제목 없는 프로젝트 ${projects.length + 1}`;
+            const defaultTitle = `프로젝트 ${projects.length + 1}`;
             const title = window.prompt('임시저장할 프로젝트 제목을 입력하세요.', defaultTitle);
             if (title) {
               setProjects([{ id: Date.now().toString(), title, date: new Date().toLocaleDateString(), totalEggs, trackers }, ...projects]);
@@ -275,7 +342,6 @@
               
               trackers.forEach(t => { 
                   updatedFamiliars[t.name] = t.targetStage; 
-                  // 사용한 전용 알(extra) 차감
                   const totalCost = calculateCost(t.baseStage, t.targetStage);
                   const usedExtra = Math.min(totalCost, t.extraEggs);
                   if (updatedExtra[t.name]) {
@@ -306,6 +372,85 @@
               setMyFamiliarsExtra(prev => ({...prev, [selectedFamiliarForStage]: count}));
           };
 
+          // 이미지 저장 모달
+          const openSaveModal = () => {
+             const initSet = new Set();
+             Object.values(familiarInfo).forEach(f => {
+                if (f.tier === '배경') initSet.add(f.name);
+             });
+             setSaveSelection(initSet);
+             setShowSaveModal(true);
+          };
+
+          const toggleSaveSelection = (name) => {
+              const newSet = new Set(saveSelection);
+              if (newSet.has(name)) newSet.delete(name);
+              else newSet.add(name);
+              setSaveSelection(newSet);
+          };
+
+          const handleMatrixClick = (rowFilter, attr) => {
+              const targets = Object.values(familiarInfo).filter(f => rowFilter(f) && f.attribute === attr).map(f => f.name);
+              if (targets.length === 0) return;
+              
+              const allSelected = targets.every(n => saveSelection.has(n));
+              const newSet = new Set(saveSelection);
+              
+              if (allSelected) {
+                  targets.forEach(n => newSet.delete(n));
+              } else {
+                  targets.forEach(n => newSet.add(n));
+              }
+              setSaveSelection(newSet);
+          };
+
+          // 4. 저장용 리스트
+          const exportGroups = React.useMemo(() => {
+              const groups = [];
+              // 속성별 루프 (불, 물, 나무, 빛, 어둠)
+              ATTRIBUTE_ORDER.forEach(attr => {
+                  const types = [
+                      { tier: '배경', type: '공격형' },
+                      { tier: '배경', type: '지원형' },
+                      { tier: '배경', type: '방어형' },
+                      { tier: '일반', type: 'any' } // 일반은 타입 구분 없이 묶음
+                  ];
+                  
+                  types.forEach(t => {
+                      const filtered = Array.from(saveSelection)
+                          .map(name => familiarInfo[name])
+                          .filter(f => f && f.attribute === attr && (t.tier === '일반' ? f.tier === '일반' : (f.tier === t.tier && f.type === t.type)));
+                      
+                      if (filtered.length > 0) {
+                          groups.push(filtered);
+                      }
+                  });
+              });
+              return groups;
+          }, [saveSelection, familiarInfo]);
+
+          const exportToImage = async () => {
+              setIsSavingImage(true);
+              const el = document.getElementById('export-container');
+              try {
+                  const canvas = await html2canvas(el, { 
+                      useCORS: true, 
+                      backgroundColor: '#18181b', // zinc-900 
+                      scale: 2 // 고화질
+                  });
+                  const link = document.createElement('a');
+                  link.download = 'familiars.png';
+                  link.href = canvas.toDataURL('image/png');
+                  link.click();
+                  setShowSaveModal(false);
+              } catch (e) {
+                  console.error(e);
+                  alert('이미지 저장에 실패했습니다.');
+              } finally {
+                  setIsSavingImage(false);
+              }
+          };
+
           if (loading) {
             return (
               <div className="min-h-screen flex flex-col items-center justify-center p-6 bg-white dark:bg-black transition-colors">
@@ -328,7 +473,7 @@
           return (
             <div className="max-w-md mx-auto min-h-screen bg-white dark:bg-black pb-24 text-black dark:text-white">
               
-              {/* 상단바: */}
+              {/* 상단바 */}
               <div className="sticky top-0 z-40 bg-white/95 dark:bg-black/95 backdrop-blur-sm border-b border-gray-200 dark:border-zinc-800 px-5 py-3 flex justify-between items-center">
                 <h1 className="font-black text-lg tracking-tight">이마젠 매니저</h1>
                 <button onClick={() => setDarkMode(!darkMode)} className="p-2 text-gray-800 dark:text-gray-200">
@@ -337,11 +482,14 @@
               </div>
 
               {activeTab === 'my' ? (
-                <div className="p-4 space-y-6 animate-fadeIn">
-                  <div className="bg-white dark:bg-black p-4 pb-0 border border-gray-200 dark:border-zinc-800 text-center">
-                    <h2 className="text-sm font-black mb-3">내 이마젠 현재 상태 입력</h2>
-                    
-                    {/* 속성 탭 추가 */}
+                <div className="p-4 space-y-4 animate-fadeIn">
+                  <div className="bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800 flex flex-col gap-3">
+                    <div className="flex justify-between items-center">
+                        <h2 className="text-sm font-black">내 이마젠 현재 상태 입력</h2>
+                        <button onClick={openSaveModal} className="flex items-center gap-1 bg-gray-100 dark:bg-zinc-800 hover:bg-gray-200 dark:hover:bg-zinc-700 px-3 py-1.5 rounded text-xs font-bold transition-colors active:scale-95">
+                            <Download className="w-3.5 h-3.5"/> 이미지 저장
+                        </button>
+                    </div>
                     <div className="flex justify-between overflow-x-auto no-scrollbar border-b border-gray-200 dark:border-zinc-800">
                       {ATTRIBUTE_ORDER.map(attr => (
                         <button
@@ -359,45 +507,46 @@
                     </div>
                   </div>
 
-                  {/* 탭으로 선택된 속성만 렌더링 */}
-                  {familiarsByAttribute[activeAttrTab] && familiarsByAttribute[activeAttrTab].length > 0 && (
-                    <div className="space-y-3 bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800">
-                      <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200">{activeAttrTab}</h3>
-                      <div className="grid grid-cols-5 gap-1">
-                        {familiarsByAttribute[activeAttrTab].map(name => {
-                          const currentIdx = myFamiliars[name] || 0;
-                          const extraCount = myFamiliarsExtra[name] || 0;
-                          const stageName = STAGES[currentIdx];
-                          
-                          return (
-                            <div key={name} className="flex flex-col items-center gap-1 relative">
-                              {/* 보유 알이 있으면 작게 표시 */}
-                              {extraCount > 0 && (
-                                <div className="absolute -top-1 -right-1 bg-green-500 text-white text-[8px] font-bold w-4 h-4 rounded-full flex items-center justify-center z-10 pointer-events-none">
-                                  +{extraCount}
-                                </div>
-                              )}
-                              <button 
-                                onClick={() => setSelectedFamiliarForStage(name)}
-                                className="w-full relative aspect-square overflow-hidden bg-gray-100 dark:bg-zinc-900 rounded-sm active:scale-95 transition-transform focus:outline-none"
-                              >
-                                <img src={getImageUrl(name, currentIdx)} alt={name} className="w-full h-full object-cover" />
-                                <div className={`absolute bottom-0 right-0 text-white text-[9px] font-bold px-1 m-0.5 rounded-sm pointer-events-none ${getBadgeColorClass(stageName)}`}>
-                                  {stageName}
-                                </div>
-                              </button>
-                              <button 
-                                onClick={() => setSelectedFamiliarForStage(name)}
-                                className="text-[10px] font-bold text-center line-clamp-1 w-full text-black dark:text-white focus:outline-none active:scale-95 transition-transform"
-                              >
-                                {name}
-                              </button>
-                            </div>
-                          );
-                        })}
+                  <div className="bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800">
+                    {/* 선택된 속성의 이마젠들을 그룹별로 렌더링 */}
+                    {myTabGroups.map((group, groupIdx) => group.length > 0 && (
+                      <div key={groupIdx} className={`${groupIdx !== myTabGroups.length - 1 ? 'mb-2' : ''}`}>
+                        <div className="grid grid-cols-5 gap-1">
+                          {group.map(f => {
+                            const name = f.name;
+                            const currentIdx = myFamiliars[name] || 0;
+                            const extraCount = myFamiliarsExtra[name] || 0;
+                            const stageName = STAGES[currentIdx];
+                            
+                            return (
+                              <div key={name} className="flex flex-col items-center gap-1 relative">
+                                {extraCount > 0 && (
+                                  <div className="absolute -top-1 -right-1 bg-green-500 text-white text-[8px] font-bold w-4 h-4 rounded-full flex items-center justify-center z-10 pointer-events-none">
+                                    +{extraCount}
+                                  </div>
+                                )}
+                                <button 
+                                  onClick={() => setSelectedFamiliarForStage(name)}
+                                  className="w-full relative aspect-square overflow-hidden bg-gray-100 dark:bg-zinc-900 rounded-sm active:scale-95 transition-transform focus:outline-none"
+                                >
+                                  <img src={getImageUrl(name, currentIdx)} alt={name} className="w-full h-full object-cover" crossOrigin="anonymous" />
+                                  <div className={`absolute bottom-0 right-0 text-white text-[9px] font-bold px-1 m-0.5 rounded-sm pointer-events-none ${getBadgeColorClass(stageName)}`}>
+                                    {stageName}
+                                  </div>
+                                </button>
+                                <button 
+                                  onClick={() => setSelectedFamiliarForStage(name)}
+                                  className="text-[10px] font-bold text-center line-clamp-1 w-full text-black dark:text-white focus:outline-none active:scale-95 transition-transform"
+                                >
+                                  {name}
+                                </button>
+                              </div>
+                            );
+                          })}
+                        </div>
                       </div>
-                    </div>
-                  )}
+                    ))}
+                  </div>
                 </div>
               ) : (
                 <div className="p-4 space-y-4 animate-fadeIn">
@@ -437,7 +586,6 @@
 
                       return (
                         <div key={t.id} className="bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800 flex items-center gap-4 relative">
-                          
                           {/* 이미지 */}
                           <div className="flex flex-col items-center shrink-0 w-14 relative">
                             {t.extraEggs > 0 && (
@@ -446,7 +594,7 @@
                               </div>
                             )}
                             <div className="w-14 h-14 overflow-hidden rounded-sm bg-gray-100 dark:bg-zinc-900">
-                              <img src={getImageUrl(t.name, t.targetStage)} alt={t.name} className="w-full h-full object-cover" />
+                              <img src={getImageUrl(t.name, t.targetStage)} alt={t.name} className="w-full h-full object-cover" crossOrigin="anonymous"/>
                             </div>
                             <span className="text-[10px] font-black tracking-tight line-clamp-1 mt-1 text-black dark:text-white">{t.name}</span>
                           </div>
@@ -516,9 +664,8 @@
                               const stageName = STAGES[currentStage];
                               return (
                                 <button key={name} onClick={() => addTracker(name)} disabled={isAdded} className={`w-full aspect-square overflow-hidden transition-all relative rounded-sm ${isAdded ? 'opacity-20 grayscale' : 'active:scale-95'}`}>
-                                  <img src={getImageUrl(name, currentStage)} alt={name} className="w-full h-full object-cover bg-gray-100 dark:bg-zinc-900" />
+                                  <img src={getImageUrl(name, currentStage)} alt={name} className="w-full h-full object-cover bg-gray-100 dark:bg-zinc-900" crossOrigin="anonymous"/>
                                   
-                                  {/* 현재 각성 단계 뱃지 표시 */}
                                   <div className={`absolute bottom-0 right-0 text-white text-[9px] font-bold px-1 m-0.5 rounded-sm pointer-events-none ${getBadgeColorClass(stageName)}`}>
                                     {stageName}
                                   </div>
@@ -528,6 +675,78 @@
                           </div>
                         </div>
                       ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {/* 이미지 저장 선택 모달 */}
+              {showSaveModal && (
+                <div className="fixed inset-0 z-50 flex items-end justify-center bg-black/80 p-0">
+                  <div className="bg-white dark:bg-black w-full max-w-md max-h-[90vh] flex flex-col border-t border-gray-200 dark:border-zinc-800 animate-slideUp">
+                    <div className="p-4 border-b border-gray-200 dark:border-zinc-800 flex justify-between items-center sticky top-0 bg-white dark:bg-black z-20">
+                      <span className="font-black text-sm text-black dark:text-white">이미지 저장 선택</span>
+                      <div className="flex items-center gap-3">
+                          <button onClick={exportToImage} disabled={isSavingImage} className="text-blue-500 font-bold text-sm disabled:opacity-50 flex items-center gap-1">
+                              {isSavingImage ? <Loader2 className="w-4 h-4 animate-spin"/> : '저장'}
+                          </button>
+                          <button onClick={() => setShowSaveModal(false)} className="p-1 text-gray-500 active:scale-90 transition-transform"><X className="w-5 h-5"/></button>
+                      </div>
+                    </div>
+                    
+                    <div className="overflow-y-auto pb-10">
+                        {/* 4x5 버튼 */}
+                        <div className="p-4 bg-gray-50 dark:bg-zinc-900/50 border-b border-gray-200 dark:border-zinc-800 sticky top-0 z-10">
+                            <div className="flex flex-col gap-1.5">
+                                {MATRIX_ROWS.map((row, rIdx) => (
+                                    <div key={rIdx} className="grid grid-cols-5 gap-1.5">
+                                        {MATRIX_COLS.map((col, cIdx) => {
+                                            const targets = Object.values(familiarInfo).filter(f => row.condition(f) && f.attribute === col.attr).map(f => f.name);
+                                            const isActive = targets.length > 0 && targets.every(n => saveSelection.has(n));
+                                            const isDisabled = targets.length === 0;
+                                            return (
+                                                <button 
+                                                    key={cIdx} 
+                                                    disabled={isDisabled}
+                                                    onClick={() => handleMatrixClick(row.condition, col.attr)}
+                                                    className={`py-1.5 text-[10px] font-bold rounded border transition-colors ${isDisabled ? 'opacity-30 border-transparent text-gray-400 bg-gray-200 dark:bg-zinc-800' : isActive ? col.activeColor : 'bg-white dark:bg-zinc-900 text-gray-500 dark:text-gray-400 border-gray-300 dark:border-zinc-700 active:scale-95'}`}
+                                                >
+                                                    {row.label}
+                                                </button>
+                                            )
+                                        })}
+                                    </div>
+                                ))}
+                            </div>
+                        </div>
+
+                        {/* 이마젠 리스트 */}
+                        <div className="p-4 space-y-6">
+                        {Object.entries(familiarsByAttribute).map(([attr, names]) => names.length > 0 && (
+                            <div key={attr} className="space-y-2">
+                                <h4 className="text-xs font-black text-gray-500 uppercase tracking-wider">{attr}</h4>
+                                <div className="grid grid-cols-5 gap-1">
+                                    {names.map(name => {
+                                        const isSelected = saveSelection.has(name);
+                                        const currentStage = myFamiliars[name] || 0;
+                                        const stageName = STAGES[currentStage];
+                                        return (
+                                            <button 
+                                                key={name} 
+                                                onClick={() => toggleSaveSelection(name)} 
+                                                className={`w-full aspect-square overflow-hidden transition-all relative rounded-sm ${!isSelected ? 'opacity-30 grayscale active:scale-95' : 'active:scale-95 ring-2 ring-black dark:ring-white ring-inset'}`}
+                                            >
+                                                <img src={getImageUrl(name, currentStage)} alt={name} className="w-full h-full object-cover bg-gray-100 dark:bg-zinc-900" crossOrigin="anonymous"/>
+                                                <div className={`absolute bottom-0 right-0 text-white text-[9px] font-bold px-1 m-0.5 rounded-sm pointer-events-none ${getBadgeColorClass(stageName)}`}>
+                                                    {stageName}
+                                                </div>
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        ))}
+                        </div>
                     </div>
                   </div>
                 </div>
@@ -603,13 +822,13 @@
 
                       {/* 2. 추가 보유 알 설정 */}
                       <div className="pt-4 border-t border-gray-200 dark:border-zinc-800">
-                        <span className="block text-xs font-black text-gray-500 dark:text-gray-400 mb-2">추가 보유 이마젠</span>
+                        <span className="block text-xs font-black text-gray-500 dark:text-gray-400 mb-2">추가 보유 이마젠 (계산기에 적용)</span>
                         <div className="grid grid-cols-2 gap-2 mb-2">
                           <button 
                             onClick={() => handleExtraEggSelect(0)} 
                             className={`py-2 text-xs font-bold border rounded active:scale-95 transition-transform ${myFamiliarsExtra[selectedFamiliarForStage] === 0 || !myFamiliarsExtra[selectedFamiliarForStage] ? 'bg-black text-white border-black dark:bg-white dark:text-black dark:border-white' : 'bg-gray-50 text-gray-500 border-gray-200 dark:bg-zinc-900 dark:border-zinc-700'}`}
                           >
-                            없음 (0개)
+                            보유 없음 (0개)
                           </button>
                         </div>
                         <div className="grid grid-cols-5 gap-1">
@@ -629,6 +848,38 @@
                   </div>
                 </div>
               )}
+
+              {/* 캡처를 위한 보이지 않는 렌더링 컨테이너 */}
+              <div 
+                  id="export-container" 
+                  className="fixed top-[200%] left-[200%] w-[450px] bg-[#18181b] p-4 flex flex-col gap-4 pointer-events-none z-[-1]"
+              >
+                  <div className="flex flex-col gap-4">
+                      {exportGroups.map((group, gIdx) => (
+                          <div key={gIdx} className="grid grid-cols-5 gap-2">
+                              {group.map(f => {
+                                  const currentIdx = myFamiliars[f.name] || 0;
+                                  const stageName = STAGES[currentIdx];
+                                  return (
+                                      <div key={f.name} className="relative aspect-square bg-zinc-800 rounded overflow-hidden">
+                                          <img 
+                                              src={f.urls[stageName.includes('초극') ? '초극' : (stageName.includes('초월') ? '초월' : (stageName.includes('일반') ? '일반' : 'X'))] || f.urls['X']} 
+                                              crossOrigin="anonymous" 
+                                              className="w-full h-full object-cover" 
+                                          />
+                                          <div className="absolute top-0 right-0 bg-black text-white text-[11px] font-bold px-1.5 py-0.5 rounded-bl">
+                                              {f.type}
+                                          </div>
+                                          <div className={`absolute bottom-0 right-0 text-white text-[12px] font-bold px-1.5 py-0.5 rounded-tl ${getBadgeColorClass(stageName)}`}>
+                                              {stageName}
+                                          </div>
+                                      </div>
+                                  );
+                              })}
+                          </div>
+                      ))}
+                  </div>
+              </div>
             </div>
           );
         }

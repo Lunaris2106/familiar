@@ -42,6 +42,8 @@
         /* 다크모드/유틸리티 커스텀 */
         .text-xxs { font-size: 0.65rem; }
         .active\:scale-98:active { transform: scale(0.98); }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
 
         /* 모바일 전용 애니메이션 */
         @keyframes slideUp {
@@ -99,6 +101,12 @@
           return cost;
         };
 
+        // 전용 알(extra)을 우선 소모하고 남은 공용 알 필요량 계산
+        const calculateNetCost = (startIdx, endIdx, extraEggs) => {
+            const totalCost = calculateCost(startIdx, endIdx);
+            return Math.max(0, totalCost - extraEggs);
+        };
+
         const getStageStyleInfo = (stageIdx) => {
           const name = STAGES[stageIdx];
           if (name.includes("초극")) return { color: "text-red-600 dark:text-red-500", accent: "#dc2626" };
@@ -107,23 +115,33 @@
           return { color: "text-gray-500 dark:text-gray-400", accent: "#737373" };
         };
 
+        const getBadgeColorClass = (stageName) => {
+          if (stageName.includes("초극")) return "bg-red-600";
+          if (stageName.includes("초월")) return "bg-purple-600";
+          if (stageName.includes("일반")) return "bg-blue-600";
+          return "bg-black dark:bg-zinc-800";
+        };
+
         function App() {
           const [loading, setLoading] = React.useState(true);
           const [error, setError] = React.useState('');
           const [activeTab, setActiveTab] = React.useState('my');
+          const [activeAttrTab, setActiveAttrTab] = React.useState(ATTRIBUTE_ORDER[0]);
           const [darkMode, setDarkMode] = React.useState(() => localStorage.getItem('theme') === 'dark');
 
           const [familiarData, setFamiliarData] = React.useState({});
           const [metadata, setMetadata] = React.useState([]);
           
           const [myFamiliars, setMyFamiliars] = React.useState(() => JSON.parse(localStorage.getItem('MY_FAMILIARS')) || {});
+          // 추가 보유 이마젠 State
+          const [myFamiliarsExtra, setMyFamiliarsExtra] = React.useState(() => JSON.parse(localStorage.getItem('MY_FAMILIARS_EXTRA')) || {});
+          
           const [projects, setProjects] = React.useState(() => JSON.parse(localStorage.getItem('CALC_PROJECTS')) || []);
           const [totalEggs, setTotalEggs] = React.useState(() => parseInt(localStorage.getItem('TOTAL_EGGS')) || 0);
           const [trackers, setTrackers] = React.useState(() => JSON.parse(localStorage.getItem('TRACKERS')) || []);
           
           const [showAddModal, setShowAddModal] = React.useState(false);
           const [showProjectsModal, setShowProjectsModal] = React.useState(false);
-          // 단계 설정 모달 상태 추가
           const [selectedFamiliarForStage, setSelectedFamiliarForStage] = React.useState(null);
 
           React.useEffect(() => {
@@ -138,6 +156,7 @@
           }, [darkMode]);
 
           React.useEffect(() => { localStorage.setItem('MY_FAMILIARS', JSON.stringify(myFamiliars)); }, [myFamiliars]);
+          React.useEffect(() => { localStorage.setItem('MY_FAMILIARS_EXTRA', JSON.stringify(myFamiliarsExtra)); }, [myFamiliarsExtra]);
           React.useEffect(() => { localStorage.setItem('CALC_PROJECTS', JSON.stringify(projects)); }, [projects]);
           React.useEffect(() => { localStorage.setItem('TOTAL_EGGS', totalEggs.toString()); }, [totalEggs]);
           React.useEffect(() => { localStorage.setItem('TRACKERS', JSON.stringify(trackers)); }, [trackers]);
@@ -182,15 +201,20 @@
             return grouped;
           }, [metadata]);
 
+          // 공용 알 계산 로직 (전용 알 우선 소모)
           const remainingEggs = React.useMemo(() => {
-            const usedEggs = trackers.reduce((acc, t) => acc + calculateCost(t.baseStage, t.targetStage), 0);
+            const usedEggs = trackers.reduce((acc, t) => {
+                return acc + calculateNetCost(t.baseStage, t.targetStage, t.extraEggs);
+            }, 0);
             return totalEggs - usedEggs;
           }, [totalEggs, trackers]);
 
           const addTracker = (name) => {
             if (trackers.some(t => t.name === name)) { setShowAddModal(false); return; }
             const base = myFamiliars[name] || 0;
-            setTrackers([...trackers, { id: Date.now().toString() + Math.random(), name, baseStage: base, targetStage: base }]);
+            const extra = myFamiliarsExtra[name] || 0;
+            // 트래커 생성 시 현재의 extraEggs 값을 복사하여 저장 (독립 계산용)
+            setTrackers([...trackers, { id: Date.now().toString() + Math.random(), name, baseStage: base, targetStage: base, extraEggs: extra }]);
             setShowAddModal(false);
           };
 
@@ -200,13 +224,21 @@
             let target = parseInt(val);
             if (target < tracker.baseStage) target = tracker.baseStage;
 
-            const costDiff = calculateCost(tracker.baseStage, target) - calculateCost(tracker.baseStage, tracker.targetStage);
+            const extra = tracker.extraEggs;
+            const currentNetCost = calculateNetCost(tracker.baseStage, tracker.targetStage, extra);
+            const targetNetCost = calculateNetCost(tracker.baseStage, target, extra);
+            const costDiff = targetNetCost - currentNetCost;
+
             if (costDiff > remainingEggs) {
               let maxAffordable = tracker.targetStage;
-              let tempRemaining = remainingEggs;
-              for (let i = tracker.targetStage; i < target; i++) {
-                if (tempRemaining >= COSTS[i]) { tempRemaining -= COSTS[i]; maxAffordable = i + 1; } 
-                else break;
+              let tempRemaining = remainingEggs + currentNetCost; // 이 트래커에 최대로 할당 가능한 공용 알
+              
+              for (let i = tracker.baseStage; i < target; i++) {
+                if (calculateNetCost(tracker.baseStage, i + 1, extra) <= tempRemaining) {
+                    maxAffordable = i + 1;
+                } else {
+                    break;
+                }
               }
               target = maxAffordable;
             }
@@ -238,11 +270,28 @@
           const confirmAwakening = () => {
             if (trackers.length === 0) return;
             if (window.confirm('이대로 진행하겠습니까?\n목표 단계가 My 이마젠 정보에 최종 반영됩니다.')) {
-              const updated = { ...myFamiliars };
-              trackers.forEach(t => { updated[t.name] = t.targetStage; });
-              setMyFamiliars(updated);
-              setTrackers(trackers.map(t => ({ ...t, baseStage: t.targetStage })));
-              // 수정: 확정 시 남은 알의 개수를 전체 알 개수에 반영
+              const updatedFamiliars = { ...myFamiliars };
+              const updatedExtra = { ...myFamiliarsExtra };
+              
+              trackers.forEach(t => { 
+                  updatedFamiliars[t.name] = t.targetStage; 
+                  // 사용한 전용 알(extra) 차감
+                  const totalCost = calculateCost(t.baseStage, t.targetStage);
+                  const usedExtra = Math.min(totalCost, t.extraEggs);
+                  if (updatedExtra[t.name]) {
+                      updatedExtra[t.name] = Math.max(0, updatedExtra[t.name] - usedExtra);
+                  }
+              });
+              
+              setMyFamiliars(updatedFamiliars);
+              setMyFamiliarsExtra(updatedExtra);
+              
+              setTrackers(trackers.map(t => {
+                  const totalCost = calculateCost(t.baseStage, t.targetStage);
+                  const usedExtra = Math.min(totalCost, t.extraEggs);
+                  return { ...t, baseStage: t.targetStage, extraEggs: t.extraEggs - usedExtra };
+              }));
+              
               setTotalEggs(remainingEggs);
               alert('My 이마젠에 반영되었습니다.');
             }
@@ -251,6 +300,10 @@
           const handleStageSelect = (stageIdx) => {
              setMyFamiliars(prev => ({...prev, [selectedFamiliarForStage]: stageIdx}));
              setSelectedFamiliarForStage(null);
+          };
+
+          const handleExtraEggSelect = (count) => {
+              setMyFamiliarsExtra(prev => ({...prev, [selectedFamiliarForStage]: count}));
           };
 
           if (loading) {
@@ -285,36 +338,66 @@
 
               {activeTab === 'my' ? (
                 <div className="p-4 space-y-6 animate-fadeIn">
-                  <div className="bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800 text-center">
-                    <h2 className="text-sm font-black mb-1">내 이마젠 현재 상태 입력</h2>
+                  <div className="bg-white dark:bg-black p-4 pb-0 border border-gray-200 dark:border-zinc-800 text-center">
+                    <h2 className="text-sm font-black mb-3">내 이마젠 현재 상태 입력</h2>
+                    
+                    {/* 속성 탭 추가 */}
+                    <div className="flex justify-between overflow-x-auto no-scrollbar border-b border-gray-200 dark:border-zinc-800">
+                      {ATTRIBUTE_ORDER.map(attr => (
+                        <button
+                          key={attr}
+                          onClick={() => setActiveAttrTab(attr)}
+                          className={`flex-1 py-2 text-xs font-black transition-colors border-b-2 ${
+                            activeAttrTab === attr 
+                              ? 'border-black dark:border-white text-black dark:text-white' 
+                              : 'border-transparent text-gray-400 dark:text-zinc-600'
+                          }`}
+                        >
+                          {attr}
+                        </button>
+                      ))}
+                    </div>
                   </div>
 
-                  {Object.entries(familiarsByAttribute).map(([attr, names]) => names.length > 0 && (
-                    <div key={attr} className="space-y-3 bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800">
-                      <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200">{attr}</h3>
-                      {/* 5열 그리드*/}
+                  {/* 탭으로 선택된 속성만 렌더링 */}
+                  {familiarsByAttribute[activeAttrTab] && familiarsByAttribute[activeAttrTab].length > 0 && (
+                    <div className="space-y-3 bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800">
+                      <h3 className="font-extrabold text-sm text-gray-800 dark:text-gray-200">{activeAttrTab}</h3>
                       <div className="grid grid-cols-5 gap-1">
-                        {names.map(name => {
+                        {familiarsByAttribute[activeAttrTab].map(name => {
                           const currentIdx = myFamiliars[name] || 0;
-                          const style = getStageStyleInfo(currentIdx);
+                          const extraCount = myFamiliarsExtra[name] || 0;
+                          const stageName = STAGES[currentIdx];
+                          
                           return (
-                            <div key={name} className="flex flex-col items-center gap-1">
-                              <div className="w-full aspect-square overflow-hidden">
-                                <img src={getImageUrl(name, currentIdx)} alt={name} className="w-full h-full object-cover" />
-                              </div>
-                              <span className="text-[10px] font-bold text-center line-clamp-1 w-full text-black dark:text-white">{name}</span>
+                            <div key={name} className="flex flex-col items-center gap-1 relative">
+                              {/* 보유 알이 있으면 작게 표시 */}
+                              {extraCount > 0 && (
+                                <div className="absolute -top-1 -right-1 bg-green-500 text-white text-[8px] font-bold w-4 h-4 rounded-full flex items-center justify-center z-10 pointer-events-none">
+                                  +{extraCount}
+                                </div>
+                              )}
                               <button 
                                 onClick={() => setSelectedFamiliarForStage(name)}
-                                className={`w-full text-xs font-black bg-gray-100 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 py-1 text-center focus:outline-none rounded-none active:scale-95 transition-transform ${style.color}`}
+                                className="w-full relative aspect-square overflow-hidden bg-gray-100 dark:bg-zinc-900 rounded-sm active:scale-95 transition-transform focus:outline-none"
                               >
-                                {STAGES[currentIdx]}
+                                <img src={getImageUrl(name, currentIdx)} alt={name} className="w-full h-full object-cover" />
+                                <div className={`absolute bottom-0 right-0 text-white text-[9px] font-bold px-1 m-0.5 rounded-sm pointer-events-none ${getBadgeColorClass(stageName)}`}>
+                                  {stageName}
+                                </div>
+                              </button>
+                              <button 
+                                onClick={() => setSelectedFamiliarForStage(name)}
+                                className="text-[10px] font-bold text-center line-clamp-1 w-full text-black dark:text-white focus:outline-none active:scale-95 transition-transform"
+                              >
+                                {name}
                               </button>
                             </div>
                           );
                         })}
                       </div>
                     </div>
-                  ))}
+                  )}
                 </div>
               ) : (
                 <div className="p-4 space-y-4 animate-fadeIn">
@@ -323,11 +406,11 @@
                   <div className="bg-white dark:bg-black p-5 border border-gray-200 dark:border-zinc-800 space-y-4">
                     <div className="flex flex-col gap-3">
                       <div className="flex justify-between items-center bg-gray-50 dark:bg-zinc-900 px-4 py-2 border border-gray-200 dark:border-zinc-800">
-                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">보유한 이마젠 알 수량</span>
+                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">보유한 공용 알 수량</span>
                         <input type="number" min="0" value={totalEggs} onChange={(e) => setTotalEggs(parseInt(e.target.value) || 0)} className="w-20 bg-transparent border-none text-base font-black text-right focus:outline-none text-black dark:text-white" />
                       </div>
                       <div className="flex justify-between items-center px-2">
-                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">남은 이마젠 알 수량</span>
+                        <span className="text-xs font-bold text-gray-500 dark:text-gray-400">남은 공용 알 수량</span>
                         <span className={`text-lg font-black ${remainingEggs < 0 ? 'text-red-500' : 'text-blue-500'}`}>{remainingEggs} 개</span>
                       </div>
                     </div>
@@ -342,7 +425,8 @@
                   {/* 트래커 리스트 */}
                   <div className="space-y-3">
                     {trackers.map(t => {
-                      const cost = calculateCost(t.baseStage, t.targetStage);
+                      const totalCost = calculateCost(t.baseStage, t.targetStage);
+                      const netCost = calculateNetCost(t.baseStage, t.targetStage, t.extraEggs);
                       const currentStyle = getStageStyleInfo(t.targetStage);
                       
                       const percentage = (t.targetStage / (STAGES.length - 1)) * 100;
@@ -355,8 +439,13 @@
                         <div key={t.id} className="bg-white dark:bg-black p-4 border border-gray-200 dark:border-zinc-800 flex items-center gap-4 relative">
                           
                           {/* 이미지 */}
-                          <div className="flex flex-col items-center shrink-0 w-14">
-                            <div className="w-14 h-14 overflow-hidden">
+                          <div className="flex flex-col items-center shrink-0 w-14 relative">
+                            {t.extraEggs > 0 && (
+                              <div className="absolute -top-1 -right-1 bg-green-500 text-white text-[8px] font-bold w-4 h-4 rounded-full flex items-center justify-center z-10">
+                                +{t.extraEggs}
+                              </div>
+                            )}
+                            <div className="w-14 h-14 overflow-hidden rounded-sm bg-gray-100 dark:bg-zinc-900">
                               <img src={getImageUrl(t.name, t.targetStage)} alt={t.name} className="w-full h-full object-cover" />
                             </div>
                             <span className="text-[10px] font-black tracking-tight line-clamp-1 mt-1 text-black dark:text-white">{t.name}</span>
@@ -370,8 +459,10 @@
                                 <span className={`text-sm ${currentStyle.color}`}>{STAGES[t.targetStage]}</span>
                               </div>
                               <div className="text-right">
-                                <span className="text-gray-500 dark:text-gray-400 font-medium block mb-0.5">비용</span>
-                                <span className="text-black dark:text-white font-black text-sm">{cost}</span>
+                                <span className="text-gray-500 dark:text-gray-400 font-medium block mb-0.5">필요 알</span>
+                                <span className="text-black dark:text-white font-black text-sm">
+                                  {netCost} <span className="text-xs text-gray-400 font-normal">/ {totalCost}</span>
+                                </span>
                               </div>
                             </div>
                             <input 
@@ -418,13 +509,19 @@
                       {Object.entries(familiarsByAttribute).map(([attr, names]) => names.length > 0 && (
                         <div key={attr} className="space-y-2">
                           <h4 className="text-xs font-black text-gray-500 uppercase tracking-wider">{attr}</h4>
-                          {/* 5열 그리드, 여백 최소화 */}
                           <div className="grid grid-cols-5 gap-1">
                             {names.map(name => {
                               const isAdded = trackers.some(tr => tr.name === name);
+                              const currentStage = myFamiliars[name] || 0;
+                              const stageName = STAGES[currentStage];
                               return (
-                                <button key={name} onClick={() => addTracker(name)} disabled={isAdded} className={`w-full aspect-square overflow-hidden transition-all ${isAdded ? 'opacity-20 grayscale' : 'active:scale-95'}`}>
-                                  <img src={getImageUrl(name, myFamiliars[name] || 0)} alt={name} className="w-full h-full object-cover" />
+                                <button key={name} onClick={() => addTracker(name)} disabled={isAdded} className={`w-full aspect-square overflow-hidden transition-all relative rounded-sm ${isAdded ? 'opacity-20 grayscale' : 'active:scale-95'}`}>
+                                  <img src={getImageUrl(name, currentStage)} alt={name} className="w-full h-full object-cover bg-gray-100 dark:bg-zinc-900" />
+                                  
+                                  {/* 현재 각성 단계 뱃지 표시 */}
+                                  <div className={`absolute bottom-0 right-0 text-white text-[9px] font-bold px-1 m-0.5 rounded-sm pointer-events-none ${getBadgeColorClass(stageName)}`}>
+                                    {stageName}
+                                  </div>
                                 </button>
                               );
                             })}
@@ -449,7 +546,7 @@
                         <p className="text-center py-10 text-sm font-bold text-gray-400">저장된 기록이 없습니다.</p>
                       ) : (
                         projects.map(p => (
-                          <div key={p.id} onClick={() => { setTotalEggs(p.totalEggs); setTrackers(p.trackers); setShowProjectsModal(false); }} className="p-4 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 flex justify-between items-center cursor-pointer">
+                          <div key={p.id} onClick={() => { setTotalEggs(p.totalEggs); setTrackers(p.trackers); setShowProjectsModal(false); }} className="p-4 bg-gray-50 dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800 flex justify-between items-center cursor-pointer rounded-sm">
                             <div>
                               <h5 className="text-sm font-black text-black dark:text-white">{p.title}</h5>
                               <p className="text-xs font-bold text-gray-500 mt-1">{p.date} · {p.trackers.length}종</p>
@@ -465,37 +562,69 @@
                 </div>
               )}
 
-              {/* 각성 단계 설정 모달 추가 */}
+              {/* 각성 단계 및 추가 알 설정 모달 */}
               {selectedFamiliarForStage && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 p-4">
                   <div className="bg-white dark:bg-black w-full max-w-sm rounded-lg flex flex-col border border-gray-200 dark:border-zinc-800 animate-fadeIn">
                     <div className="p-4 border-b border-gray-200 dark:border-zinc-800 flex justify-between items-center">
-                      <span className="font-black text-sm text-black dark:text-white">{selectedFamiliarForStage} 각성 단계</span>
+                      <span className="font-black text-sm text-black dark:text-white">{selectedFamiliarForStage} 설정</span>
                       <button onClick={() => setSelectedFamiliarForStage(null)} className="p-1 text-gray-500 active:scale-90 transition-transform"><X className="w-5 h-5"/></button>
                     </div>
                     <div className="p-4 space-y-2 pb-6">
-                      <div className="grid grid-cols-2 gap-2 mb-3">
-                          <button onClick={() => handleStageSelect(0)} className="py-2 text-xs font-bold border border-gray-200 dark:border-zinc-700 rounded text-gray-500 active:scale-95 transition-transform bg-gray-50 dark:bg-zinc-900">X</button>
-                          <button onClick={() => handleStageSelect(1)} className="py-2 text-xs font-bold border border-blue-200 dark:border-blue-900 rounded text-blue-600 dark:text-blue-500 active:scale-95 transition-transform bg-blue-50 dark:bg-blue-900/20">일반 0</button>
-                      </div>
-                      {[
-                        { label: '일반', start: 2, end: 11, colorClass: 'text-blue-600 dark:text-blue-500 border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-900/10' },
-                        { label: '초월', start: 12, end: 21, colorClass: 'text-purple-600 dark:text-purple-500 border-purple-200 dark:border-purple-900 bg-purple-50 dark:bg-purple-900/10' },
-                        { label: '초극', start: 22, end: 31, colorClass: 'text-red-600 dark:text-red-500 border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/10' }
-                      ].map(group => (
-                        <div key={group.label} className="space-y-1">
-                          <div className="grid grid-cols-5 gap-1">
-                             {STAGES.slice(group.start, group.start + 5).map((s, i) => (
-                                <button key={s} onClick={() => handleStageSelect(group.start + i)} className={`py-1.5 text-[10px] font-bold border rounded ${group.colorClass} truncate active:scale-95 transition-transform`}>{s}</button>
-                             ))}
-                          </div>
-                          <div className="grid grid-cols-5 gap-1">
-                             {STAGES.slice(group.start + 5, group.end + 1).map((s, i) => (
-                                <button key={s} onClick={() => handleStageSelect(group.start + 5 + i)} className={`py-1.5 text-[10px] font-bold border rounded ${group.colorClass} truncate active:scale-95 transition-transform`}>{s}</button>
-                             ))}
-                          </div>
+                      {/* 1. 각성 단계 설정 */}
+                      <div className="mb-4">
+                        <div className="grid grid-cols-2 gap-2 mb-3">
+                            <button onClick={() => handleStageSelect(0)} className={`py-2 text-xs font-bold border rounded active:scale-95 transition-transform ${myFamiliars[selectedFamiliarForStage] === 0 ? 'bg-gray-800 text-white border-gray-800 dark:bg-gray-200 dark:text-black dark:border-gray-200' : 'bg-gray-50 text-gray-500 border-gray-200 dark:bg-zinc-900 dark:border-zinc-700'}`}>X</button>
+                            <button onClick={() => handleStageSelect(1)} className={`py-2 text-xs font-bold border rounded active:scale-95 transition-transform ${myFamiliars[selectedFamiliarForStage] === 1 ? 'bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:border-blue-500 dark:text-white' : 'bg-blue-50 text-blue-600 border-blue-200 dark:bg-blue-900/20 dark:text-blue-500 dark:border-blue-900'}`}>일반 0</button>
                         </div>
-                      ))}
+                        {[
+                          { label: '일반', start: 2, end: 11, colorClass: 'text-blue-600 dark:text-blue-500 border-blue-200 dark:border-blue-900 bg-blue-50 dark:bg-blue-900/10', activeClass: 'bg-blue-600 text-white border-blue-600 dark:bg-blue-500 dark:text-white dark:border-blue-500' },
+                          { label: '초월', start: 12, end: 21, colorClass: 'text-purple-600 dark:text-purple-500 border-purple-200 dark:border-purple-900 bg-purple-50 dark:bg-purple-900/10', activeClass: 'bg-purple-600 text-white border-purple-600 dark:bg-purple-500 dark:text-white dark:border-purple-500' },
+                          { label: '초극', start: 22, end: 31, colorClass: 'text-red-600 dark:text-red-500 border-red-200 dark:border-red-900 bg-red-50 dark:bg-red-900/10', activeClass: 'bg-red-600 text-white border-red-600 dark:bg-red-500 dark:text-white dark:border-red-500' }
+                        ].map(group => (
+                          <div key={group.label} className="space-y-1 mb-2">
+                            <div className="grid grid-cols-5 gap-1">
+                               {STAGES.slice(group.start, group.start + 5).map((s, i) => {
+                                 const idx = group.start + i;
+                                 const isActive = myFamiliars[selectedFamiliarForStage] === idx;
+                                 return <button key={s} onClick={() => handleStageSelect(idx)} className={`py-1.5 text-[10px] font-bold border rounded truncate active:scale-95 transition-transform ${isActive ? group.activeClass : group.colorClass}`}>{s}</button>
+                               })}
+                            </div>
+                            <div className="grid grid-cols-5 gap-1">
+                               {STAGES.slice(group.start + 5, group.end + 1).map((s, i) => {
+                                 const idx = group.start + 5 + i;
+                                 const isActive = myFamiliars[selectedFamiliarForStage] === idx;
+                                 return <button key={s} onClick={() => handleStageSelect(idx)} className={`py-1.5 text-[10px] font-bold border rounded truncate active:scale-95 transition-transform ${isActive ? group.activeClass : group.colorClass}`}>{s}</button>
+                               })}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+
+                      {/* 2. 추가 보유 알 설정 */}
+                      <div className="pt-4 border-t border-gray-200 dark:border-zinc-800">
+                        <span className="block text-xs font-black text-gray-500 dark:text-gray-400 mb-2">추가 보유 이마젠</span>
+                        <div className="grid grid-cols-2 gap-2 mb-2">
+                          <button 
+                            onClick={() => handleExtraEggSelect(0)} 
+                            className={`py-2 text-xs font-bold border rounded active:scale-95 transition-transform ${myFamiliarsExtra[selectedFamiliarForStage] === 0 || !myFamiliarsExtra[selectedFamiliarForStage] ? 'bg-black text-white border-black dark:bg-white dark:text-black dark:border-white' : 'bg-gray-50 text-gray-500 border-gray-200 dark:bg-zinc-900 dark:border-zinc-700'}`}
+                          >
+                            없음 (0개)
+                          </button>
+                        </div>
+                        <div className="grid grid-cols-5 gap-1">
+                          {[1,2,3,4,5,6,7,8,9,10,11,12,13,14,15].map(num => (
+                              <button 
+                                key={num} 
+                                onClick={() => handleExtraEggSelect(num)} 
+                                className={`py-1.5 text-[10px] font-bold border rounded active:scale-95 transition-transform ${myFamiliarsExtra[selectedFamiliarForStage] === num ? 'bg-black text-white border-black dark:bg-white dark:text-black dark:border-white' : 'bg-white text-black border-gray-200 dark:bg-black dark:text-white dark:border-zinc-700'}`}
+                              >
+                                 {num}
+                              </button>
+                          ))}
+                        </div>
+                      </div>
+                      
                     </div>
                   </div>
                 </div>
